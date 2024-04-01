@@ -1,0 +1,300 @@
+---
+title: "Buncombe Jail EJ Length of Stay Misdemeanors for Short Stays"
+author: "DIH"
+date: "2024-03-31"
+output: html_document
+---
+```{r, setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r load, echo=FALSE, message=FALSE, warning=FALSE}
+# https://scriptsandstatistics.wordpress.com/2018/02/26/r-markdown-how-to-place-two-tables-side-by-side-using-knitr-and-kableextra/
+# https://bookdown.org/yihui/rmarkdown-cookbook/kable.html#multiple-tables-side-by-side
+# https://mine-cetinkaya-rundel.github.io/quarto-tip-a-day/posts/01-side-by-side-tables/
+# https://rfortherestofus.com/2021/11/multicolumn
+# essential files
+load(file=paste0(RDataPath,"BBB_functions.RData"))
+#
+load(file=paste0(RDataPath,"df_stay_pretrial_offense_all.RData"))
+load(file=paste0(RDataPath,"df_inmate_stays.RData"))
+```
+  
+```{r compute_n_day, echo=FALSE, warning=FALSE, message=FALSE}
+# counts M stays in POST and in the comparison interval
+#
+ret_1 <- 
+	fn_dcasts_classes_compare(
+		df_stay_pretrial_offense_all, 
+		classes_="M",
+		stay_between_=1, 
+		start_date_=COMPARE_TO_DATE_START, 
+		stop_date_=COMPARE_TO_DATE_STOP
+	)
+new_dcast_1 <- ret_1[["new_dcast"]]
+N_compare_total_1 <- ret_1[["N_compare_total"]]
+N_PTIA_total_1 <- ret_1[["N_PTIA_total"]]
+#
+ret_2 <- 
+	fn_dcasts_classes_compare(
+		df_stay_pretrial_offense_all, 
+		classes_="M",
+		stay_between_=c(2,4), 
+		start_date_=COMPARE_TO_DATE_START, 
+		stop_date_=COMPARE_TO_DATE_STOP
+	)
+new_dcast_2_4 <- ret_2[["new_dcast"]]
+N_compare_total_2_4 <- ret_2[["N_compare_total"]]
+N_PTIA_total_2_4 <- ret_2[["N_PTIA_total"]]
+```
+  
+## A. Class M stays of 1 day by pre- and post-PTIA contingency tables  
+  
+Consider only class_type_dom "M" and stays of 1 day. This includes repetitive stays for persons detained more than once.  
+  
+Total number of stays of 1 day  
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+df_stay_pretrial_offense_all %>%  
+	dplyr::filter(
+		class_type_dom %in% c("M") &
+		total_stay ==1
+	) %>% 
+	reshape2::dcast(
+		which_side ~ ., 
+		length
+	) %>%
+	dplyr::rename(
+		N = '.'
+	) %>%
+	kable() %>%
+	kable_styling(full_width = F)
+```
+
+Persons class "M" having at least one stay of 1 day over pre- and post-PTIA intervals.  
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+ret_3 <- df_stay_pretrial_offense_all %>% fn_persons_classes_n_day_stays(classes_="M", stay_between_=1)
+df_persons_M_1_day_all <- ret_3[["all"]]
+df_persons_M_1_day_pre <- ret_3[["pre"]]
+df_persons_M_1_day_post <- ret_3[["post"]]
+df_persons_M_1_day_both <- ret_3[["both"]]
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# split by pre- and post-PTIA
+df_stay_pretrial_offense_all %>%  
+	dplyr::filter(
+		class_type_dom %in% c("M") &
+		total_stay == 1
+	) %>% 
+	dplyr::select(
+		stay_id,
+		which_side
+	) %>%
+dplyr::inner_join(
+	df_inmate_stays %>%
+		dplyr::select(
+			stay_id,
+			name
+		),
+	by = "stay_id"
+) %>%
+dplyr::select(
+	name,
+	which_side
+) %>%
+dplyr::distinct() %>%
+reshape2::dcast(
+	which_side ~ ., 
+	length
+) %>%
+dplyr::rename(
+	N = '.'
+) %>%
+kable() %>%
+kable_styling(full_width = F)
+```
+
+## B. Compare 1 Day Stays to Similar Period One Year Ago  
+  
+Number of Stays (not persons) Offense M for Stays of 1 Day by Starting Day of Week (Sunday is 1) Compared to Similar Calendar Period `r COMPARE_TO_DATE_START` to `r COMPARE_TO_DATE_STOP`  
+
+```{r, echo=FALSE}
+rbind(
+	new_dcast_1 %>%
+		dplyr::select(
+			day_of_week,
+			N_compare,
+			N_PTIA
+		),
+		data.frame(
+			day_of_week = "(all)",
+			N_compare = N_compare_total_1,
+			N_PTIA = N_PTIA_total_1
+		)
+	) %>%
+kable() %>%
+kable_styling(full_width = F)
+```
+  
+Number of Stays of 1 Day as As Percentages  
+  
+```{r, echo=FALSE}
+new_dcast_1_pct <-
+	new_dcast_1 %>%
+		dplyr::mutate(
+			pct_compare = round(N_compare/N_compare_total_1, digits=3),
+			pct_PTIA = round(N_PTIA/N_PTIA_total_1, digits = 3)
+		) %>%
+		dplyr::select(
+			day_of_week,
+			pct_compare,
+			pct_PTIA
+		)
+#
+new_dcast_1_pct %>%
+kable() %>%
+kable_styling(full_width = F)
+```
+  
+## C. All Class M with stays between 2 and 4 days contingency tables  
+ 
+Consider only class_type_dom "M" and stays of 2 to 4 days.  
+  
+Number of stays between 2 and 4 days  
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+df_stay_pretrial_offense_all %>%  
+	dplyr::filter(
+		class_type_dom %in% c("M") &
+		total_stay >= 2 & total_stay <= 4
+	) %>% 
+	reshape2::dcast(
+		which_side ~ ., 
+		length
+	) %>%
+	dplyr::rename(
+		N = '.'
+	) %>%
+	kable() %>%
+	kable_styling(full_width = F)
+```
+
+Number of persons having stays between 2 and 4 days:
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+df_stay_pretrial_offense_all %>%  
+	dplyr::filter(
+		class_type_dom %in% c("M") &
+		total_stay >= 2 & total_stay <= 4
+	) %>% 
+	dplyr::select(
+		stay_id,
+		which_side
+	) %>%
+dplyr::inner_join(
+	df_inmate_stays %>%
+		dplyr::select(
+			stay_id,
+			name
+		),
+	by = "stay_id"
+) %>%
+dplyr::select(
+	name,
+	which_side
+) %>%
+dplyr::distinct() %>%
+reshape2::dcast(
+	which_side ~ ., 
+	length
+) %>%
+dplyr::rename(
+	N = '.'
+) %>%
+kable() %>%
+kable_styling(full_width = F)
+```
+
+## D. Compare 2 to 4 Day Stays to Similar Period One Year Ago  
+  
+Number of Stays (not persons) Offense M for Between 2 and 4 Days by Starting Day of Week (Sunday is 1) Compared on Similar Calendar Period `r COMPARE_TO_DATE_START` to `r COMPARE_TO_DATE_STOP`  
+  
+```{r, echo=FALSE}
+rbind(
+	new_dcast_2_4 %>%
+		dplyr::select(
+			day_of_week,
+			N_compare,
+			N_PTIA
+		),
+		data.frame(
+			day_of_week = "(all)",
+			N_compare = N_compare_total_2_4,
+			N_PTIA = N_PTIA_total_2_4
+		)
+	) %>%
+kable() %>%
+kable_styling(full_width = F)
+```
+  
+Number of Stays (between 2 and 4 days) as As Percentages  
+  
+```{r, echo=FALSE}
+new_dcast_2_4_pct <-
+	new_dcast_2_4 %>%
+		dplyr::mutate(
+			pct_compare = round(N_compare/N_compare_total_2_4, digits=3),
+			pct_PTIA = round(N_PTIA/N_PTIA_total_2_4, digits = 3)
+		) %>%
+		dplyr::select(
+			day_of_week,
+			pct_compare,
+			pct_PTIA
+		)
+#
+new_dcast_2_4_pct %>%
+kable() %>%
+kable_styling(full_width = F)
+```
+  
+## E. Percent Line Plots  
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=7, fig.width=8}
+new_dcast_1_pct %>%
+	fn_make_compare_stay_pct_line(
+		"Offense M Percent Number of Stays of Length 1 Day", 
+		paste("PTIA Compared to", COMPARE_TO_DATE_START, "to", COMPARE_TO_DATE_STOP)
+	)
+```
+  
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=7, fig.width=8}
+new_dcast_2_4_pct %>% 
+	fn_make_compare_stay_pct_line(
+		"Offense M Percent Number of Stays of Length 2 to 4 Days", 
+		paste("PTIA Compared to", COMPARE_TO_DATE_START, "to", COMPARE_TO_DATE_STOP)
+	)
+```
+
+```{r, echo=FALSE}
+knitr::knit_exit()
+```
+
+## E. Bar Charts  
+  
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=7, fig.width=8}
+fn_make_compare_stay_count(new_dcast_1, "1 Day", "Number of Stays of Length 1 Day", paste("PTIA Compared to", compare_start_date, "to", compare_stop_date))
+```
+  
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=7, fig.width=8}
+fn_make_compare_stay_pct(new_dcast_1_pct, "1 Day", "Percent Number of Stays of Length 1 Day", paste("PTIA Compared to", compare_start_date, "to", compare_stop_date))
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=7, fig.width=8}
+fn_make_compare_stay_count(new_dcast_2_4, "2 to 4 Days", "Number of Stays of Length 2 to 4 Days", paste("PTIA Compared to", compare_start_date, "to", compare_stop_date))
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=7, fig.width=8}
+fn_make_compare_stay_pct(new_dcast_2_4_pct, "2 to 4 Days", "Percent Number of Stays of Length 2 to 4 Days", paste("PTIA Compared to", compare_start_date, "to", compare_stop_date))
+```

@@ -1,0 +1,1303 @@
+---
+title: "Buncombe Jail EJ Functions"
+author: "DIH"
+date: "2024-03-31"
+output: html_document
+params:
+  SHOW_SCRIPT: TRUE
+---
+
+```{r, setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r, message=FALSE, warning=FALSE, echo=params$SHOW_SCRIPT}
+# Ref:
+# from console create script of all R chunks
+# knitr::purl(input="Report_A_all_dates.Rmd", output="Report_A_all_dates_script.r", documentation=0)
+#
+# use {{var_}} to pass var_ as unquoted column name
+```
+
+```{r}
+check_exists <- function(check_){
+	# check to see if function name already in use
+	if (check_ %in% name_list){
+		print(paste("ERROR:",check_,"already exists."))
+		knitr::knit_exit()
+	} else {
+		name_list <- c(name_list, check_)
+	}
+	#
+	return(name_list)
+}
+```
+
+### FUNCTIONS  
+  
+```{r functions, message=FALSE, warning=FALSE, echo=params$SHOW_SCRIPT}
+# use this to remove NULL objects
+# https://stackoverflow.com/questions/13094689/removing-null-objects-from-an-environment
+fn_remove_NULL_objects <- function(){
+rm(
+  list=names(
+    which(
+      sapply(globalenv(),is.null) # or .GlobalEnv
+      )
+    )
+  )
+return(TRUE)
+}
+#
+name_list  = "fn_remove_NULL_objects"
+#
+fn_save_zip_it <- function(df_name_, RDataPath_){
+	# https://stackoverflow.com/questions/58332390/r-save-within-a-function-preserve-the-original-inputs-name
+	# special purpose save as RData and zip csv and remove
+	obj_name_ <- deparse(substitute(df_name_))
+	save(list = obj_name_, file = paste0( RDataPath_, obj_name_, ".RData" ))
+	readr::write_csv(df_name_, file = paste0( RDataPath_, obj_name_, ".csv"), col_names = TRUE)
+	zip::zip(paste0( RDataPath_, obj_name_, "_", FILE_DATE, ".zip"), paste0( RDataPath_, obj_name_, ".csv" ))
+	file.remove(paste0( RDataPath_, obj_name_, ".csv" ))
+	return()
+}
+#
+name_list <- check_exists("fn_save_zip_it")
+#
+# added 1/31/2024 level
+fn_daily_combined_mod <- function( df_in_, df_charge_def_ ){
+	# use as df_daily_combined, df_charge_def etc.
+	df_out_ <-
+		dplyr::inner_join(
+			df_in_,
+			df_charge_def_ %>%
+				dplyr::select(
+					charge_def_id,
+					class_type_sup,
+					level,
+					violent,
+					drugs,
+					dwi,
+					theft
+				),
+			by = "charge_def_id"
+		)
+	#
+	return(df_out_)
+}
+#
+name_list <- check_exists("fn_daily_combined_mod")
+#
+# rev 2/17/2024
+# added 2/9/2024
+fn_stay_id_pretrial_total_sec_bond <- function(df_in_){
+	#
+	# use as df_daily_combined_pretrial_mod 
+	#
+	df_out_ <- df_in_ %>%
+		dplyr::filter(
+			bond_type == "SECURED" &
+			status == "PRE-TRIAL"
+		) %>%
+		dplyr::group_by(
+			stay_id,
+			defendant_id
+		) %>%
+		dplyr::summarize(
+			total_sec_amount = sum(bond_amount)
+		) %>%
+		dplyr::filter(
+			dplyr::row_number() == 1
+		) %>%
+		dplyr::ungroup() %>%
+		dplyr::select(
+			-defendant_id
+		) %>%
+		dplyr::anti_join(
+			df_in_  %>%
+				dplyr::filter(
+					bond_type == "NO BOND" &
+					status == "PRE-TRIAL"
+				) %>%
+				dplyr::select(
+					stay_id,
+					defendant_id
+				) %>%
+				dplyr::group_by(
+					stay_id,
+					defendant_id
+				) %>%
+				dplyr::filter(
+					dplyr::row_number() == 1
+				) %>%
+				dplyr::ungroup() %>%
+				dplyr::select(
+					-defendant_id
+				),
+			by = "stay_id"
+		)
+	#
+	return(df_out_)
+}
+#
+name_list <- check_exists("fn_stay_id_pretrial_total_sec_bond")
+#
+# modified 3/18/2024
+fn_total_stay_bond_amount_bundle_start_date <- function( df_sup_, df_inf_){
+	# use df_stay_id_bundle_pretrial_coded_bond_class_segments_min etc
+	# match with df_stay_id_pretrial_total_sec_bond_min_all etc
+	df_out_ <- dplyr::inner_join(
+		df_sup_ %>%
+			dplyr::filter(
+				segment_num == 1
+			) %>%
+			dplyr::select(
+				stay_id,
+				import_date,
+				coded_id,
+				total_stay
+			),
+		df_inf_ %>%
+			dplyr::select(
+				stay_id,
+				total_sec_amount
+			),
+		by = "stay_id"
+	)
+	#
+	return(df_out_)
+}
+#
+name_list <- check_exists("fn_total_stay_bond_amount_bundle_start_date")
+#
+# modified 3/18/2024
+fn_daily_combined_mod_mult_dcast <- function(df_sup_, df_inf_){
+	# use as df_daily_combined_pretrial_mod and df_stay_id_pretrial_total_sec_bond_min_all
+	# dcast
+	#
+	df_out_ <-
+		dplyr::inner_join(
+			df_sup_,
+			df_inf_ %>%
+				dplyr::select(
+					stay_id
+				),
+			by = "stay_id"
+		) %>% 
+			reshape2::dcast(
+				stay_id + defendant_id + import_date ~ ., length
+			) %>%
+			dplyr::rename(
+				N = '.'
+			)
+	#
+	return(df_out_)
+}
+#
+name_list <- check_exists("fn_daily_combined_mod_mult_dcast")
+#
+# modified 3/15/2024
+# added 2/7/2024 class_type_sup and class_type_dom
+# added 1/31/2024 level
+fn_daily_combined_mod_mult_mod_coded <- function(df_sup_, df_inf_){
+	#
+	# as using df_daily_combined_pretrial_mod_mult_stay_id_min and df_daily_combined_mod      
+	# class_type_dom (dominant) is generated as H, L, F, M, or U
+	#
+	ret <- list()
+	#
+	df_ <-
+		dplyr::inner_join(
+			df_sup_,
+			df_inf_ %>%
+				dplyr::select(
+					defendant_id,
+					class_type_sup,
+					level,
+					violent,
+					drugs,
+					dwi,
+					theft,
+					bond_type
+				) %>%
+				dplyr::mutate(
+					F = ifelse(class_type_sup == "F", 1, 0),
+					L = ifelse(class_type_sup == "L", 1, 0),
+					H = ifelse(class_type_sup == "H", 1, 0),
+					M = ifelse(class_type_sup == "M", 1, 0),
+					U = ifelse(class_type_sup == "U", 1, 0),
+					NB = ifelse(bond_type == "NO BOND", 1, 0)
+				) %>%
+				dplyr::select(
+					-class_type_sup
+				) %>%
+				dplyr::group_by(
+					defendant_id
+				) %>%
+				dplyr::summarize(
+					F = sum(F),
+					L = sum(L),
+					H = sum(H),
+					M = sum(M),
+					U = sum(U),
+					NB = sum(NB),
+					violent = sum(violent),
+					drugs = sum(drugs),
+					dwi = sum(dwi),
+					theft = sum(theft),
+					NB = sum(NB)
+				) %>%
+				dplyr::mutate(
+					class_type_dom = ifelse(H > 0, "H", (ifelse(L > 0, "L", (ifelse(F > 0, "F", (ifelse(M > 0, "M", "U"))))))),
+					bond_type = ifelse(NB > 0, "N", "B"),
+					violent = ifelse(violent > 0, 1, violent),
+					drugs = ifelse(drugs > 0, 1, drugs),
+					dwi = ifelse(dwi > 0, 1, dwi),
+					theft = ifelse(theft > 0, 1, theft),
+					coded = paste0(violent, drugs, dwi, theft),
+					coded_bond_class = paste0(bond_type, class_type_dom, violent, drugs, dwi, theft)
+				) %>%
+				dplyr::select(
+					-c(F, L, H, M, U, NB)
+				),
+			by = "defendant_id"
+		) %>%
+		dplyr::ungroup() %>%
+		dplyr::arrange(
+			stay_id,
+			import_date
+		)
+	#
+	# compute bundle defs
+	#
+	ret[["bundle_def_coded"]] <-
+		df_ %>%
+			dplyr::distinct(
+				coded
+			) %>%
+			dplyr::mutate(
+				coded_id = dplyr::row_number()
+			)
+	#
+	ret[["bundle_def_coded_bond_class"]] <-
+		df_ %>%
+			dplyr::distinct(
+				coded_bond_class
+			) %>%
+			dplyr::mutate(
+				coded_id = dplyr::row_number(),
+				class_type_dom = stringr::str_sub(coded_bond_class,2,2)
+			)
+	#
+	ret[["df_bundled"]] <- df_ %>%
+		dplyr::left_join(
+			ret[["bundle_def_coded"]],
+			by = "coded"
+		) %>%
+		dplyr::left_join(
+			ret[["bundle_def_coded_bond_class"]] %>%
+				dplyr::select(
+					-class_type_dom
+				) %>%
+				dplyr::rename(
+					coded_bond_class_id = coded_id
+				),
+			by = "coded_bond_class"
+		)
+	#
+	return(ret)
+}
+#
+name_list <- check_exists("fn_daily_combined_mod_mult_mod_coded")
+#
+fn_stay_id_bundle_segments <- function( df_in_, df_inmate_stays_ ){
+	# determine start dates within each stay for each pertinent bundle
+	#
+	# use df_daily_combined_mod_mult_mod_coded etc. and df_inmate_stays
+	#
+	# include total stay from df_inmate_stays
+	# use {{var_}} to pass var_ as unquoted column name
+	fn_coded_ <- function(var_){
+		# local function
+		df_compute_ <- df_in_ %>%
+			dplyr::select(
+				stay_id,
+				import_date,
+				{{var_}}
+			) %>%
+			dplyr::arrange(
+				stay_id,
+				import_date
+			) %>%
+			dplyr::group_by(
+				stay_id,
+				{{var_}}
+			) %>%
+			dplyr::filter(
+				dplyr::row_number() == 1
+			) %>%
+			dplyr::ungroup() %>%
+			# add total stay
+			dplyr::inner_join(
+				df_inmate_stays_ %>%
+					dplyr::select(
+						stay_id,
+						stay
+					),
+				by = "stay_id"
+			) %>%
+			dplyr::rename(
+				total_stay = stay
+			)
+		#
+		return( df_compute_ )
+	}
+	#
+	fn_times_ <- function( df_in_ ){
+		# local function
+		# use result of fn_coded_()
+		# add number of instances of stay_id
+		#
+		dcast_ <- 
+			df_in_ %>% 
+				reshape2::dcast(
+					stay_id ~ ., length
+				) %>%
+				dplyr::rename(
+					n_segments = '.'
+				)
+		#
+		df_added_ <-
+			dplyr::inner_join(
+				df_in_,
+				dcast_,
+				by = "stay_id"
+			)
+		#
+		df_added_ %<>%
+			dplyr::group_by(
+				stay_id
+			) %>%
+			dplyr::mutate(
+				segment_num = dplyr::row_number()
+			) %>%
+			dplyr::ungroup()
+		#
+		return(df_added_)
+	}
+	#
+	fn_segment_length_ <- function( df_in_ ){
+		# local function
+		# compute stay for each segment
+		# use result of fn_times_()
+		# first step is to load segment_stay with default value
+		df_in_ %<>% 
+			dplyr::mutate(
+				segment_stay = total_stay
+			)
+		#
+		# handle only the stays that have multiple bundles
+		#
+		for (i in 1:nrow(df_in_)){
+			# do we care? 
+			# must have multiple bundles
+			if (df_in_[[i, "n_segments"]] > 1){
+				# is this the first segment?
+				if (df_in_[[i, "segment_num"]] == 1){
+					# look ahead to set first segment_stay 
+					df_in_[[i, "segment_stay"]] <- 
+						df_in_[[i + 1, "import_date"]] - df_in_[[i, "import_date"]]
+					days_ <- df_in_[[i, "segment_stay"]]
+				} else if
+					# is this the final segment?
+					(df_in_[[i, "segment_num"]] == df_in_[[i, "n_segments"]]){
+						# fill in segment_stay and leave
+						df_in_[[i, "segment_stay"]] <- df_in_[[i, "total_stay"]] - days_
+				} else {
+					# intermediate segment
+					df_in_[[i, "segment_stay"]] <- df_in_[[i + 1, "import_date"]] - df_in_[[i, "import_date"]]
+					days_ <- days_ + df_in_[[i, "segment_stay"]]
+				}
+			}
+		}
+		#
+		return( df_in_ )
+	}
+	# 
+	# do the work
+	#
+	ret_ <- list()
+	#
+	df_1_ <- fn_coded_(coded_id)
+	df_2_ <- fn_times_( df_1_ )
+	ret_[["coded_added_stays"]] <- fn_segment_length_( df_2_ )
+	rm(df_1_, df_2_)
+	#
+	# rename coded_bond_class_id to coded_id for subsequent analysis
+	#
+	df_1_ <- fn_coded_(coded_bond_class_id) %>%
+		dplyr::rename(
+			coded_id = coded_bond_class_id
+		)
+	df_2_ <- fn_times_( df_1_ )
+	ret_[["coded_bond_class_added_stays"]] <- fn_segment_length_( df_2_ )
+	#
+	return(ret_)
+}
+#
+name_list <- check_exists("fn_stay_id_bundle_segments")
+#
+fn_bundles_per_stay_id <- function( df_in_ ){
+	# use df_daily_combined_mod_mult_mod_coded etc.
+	# return list (see below for details)
+	#
+	# this is a local function:
+	fn_collapse_ <- function( dc_in_ ){
+		collapse_ <- dc_in_ %>%
+			reshape2::dcast(
+				N ~ .,
+				length
+			) %>%
+			dplyr::rename(
+				Count = "."
+			)
+		#
+		return(collapse_)
+	}
+	#
+	# this is the main function that faces the outside world:
+	ret_ <- list()
+	#
+	# data frame stay_id, N (number of bundles) for coded_id
+	# one row per stay_id
+	#
+	ret_[["coded"]] <-
+		df_in_ %>%
+			reshape2::dcast(
+				stay_id + coded_id ~ .,
+				length
+			) %>%
+			reshape2::dcast(
+				stay_id ~ .,
+				length
+			) %>%
+			dplyr::rename(
+				N = '.'
+			)
+	# rollup data frame for coded_id
+	# number of stay_id (Count) with N bundles
+	# N, Count
+	ret_[["coded_collapse"]] <-
+		fn_collapse_( ret_[["coded"]] )
+	#
+	# data frame stay_id, N (number of bundles) for coded_id
+	# one row per stay_id
+	#
+	ret_[["coded_bond_class"]] <-
+		df_in_ %>%
+			reshape2::dcast(
+				stay_id + coded_id ~ .,
+				length
+			) %>%
+			reshape2::dcast(
+				stay_id ~ .,
+				length
+			) %>%
+			dplyr::rename(
+				N = '.'
+			)		
+	# rollup data frame for coded_id
+	# number of stay_id (Count) with N bundles
+	# N, Count
+	ret_[["coded_bond_class_collapse"]] <-
+		fn_collapse_( ret_[["coded_bond_class"]] )
+	#
+	return(ret_)
+}
+#
+name_list <- check_exists("fn_bundles_per_stay_id")
+#
+# modified 3/15/2024 remove which_offense
+# added 3/15/2024
+fn_stay_pretrial_offense_all <- function(df_sup_, df_inf_){
+	# use df_stay_id_pretrial_total_sec_bond_min_all and df_combined_pretrial_coded_bond_class_bundle_min
+	# create dataframe with stay, bond, PRE/POST and offense
+	#
+	df_out_ <-
+		dplyr::inner_join(
+			df_sup_,
+			df_inf_,
+			by = "coded_id"
+		) %>%
+		dplyr::mutate(
+			which_side = ifelse( import_date < lubridate::ymd(PTIA_DATE), "PRE", "POST" )
+		)
+#
+	return(df_out_)
+}
+#
+name_list <- check_exists("fn_stay_pretrial_offense_all")
+#
+# modified 3/16/2024
+# added 2/19/2024
+fn_mult_stays_by_name <- function( df_in_, df_inmate_stays_ ){
+	# using df_stay_pretrial_offence_all
+	# and df_inmate stays
+	#
+	# number of appearances of name in df_in_ by indirection
+	df_out_ <- 
+		dplyr::inner_join(
+			df_in_ %>%
+				dplyr::select(
+					stay_id
+				),
+			df_inmate_stays_ %>%
+				dplyr::select(
+					stay_id,
+					name
+				),
+			by = "stay_id"
+		) %>%
+		dplyr::group_by(
+			name
+		) %>%
+		dplyr::summarize(
+			N = n()
+		)
+	#
+	return(df_out_)
+}
+#
+name_list <- check_exists("fn_mult_stays_by_name")
+#
+# added 3/30/2024
+fn_offense_count <- function(df_in_, cutoff_, split_at_){
+	#use df_stay_pretrial_offense_all
+	ret <- list()
+	df_ <- 
+		df_in_ %>%
+			dplyr::filter(
+				total_sec_amount <= cutoff
+			) %>%
+			dplyr::mutate(
+				class_type_dom = stringr::str_sub(coded_bond_class,2,2),
+				violent = stringr::str_sub(coded_bond_class,3,3),
+				drugs = stringr::str_sub(coded_bond_class,4,4),
+				dwi = stringr::str_sub(coded_bond_class,5,5),
+				theft = stringr::str_sub(coded_bond_class,6,6),
+				cat_total_sec_amount = santoku::chop(
+						total_sec_amount, 
+						split_at_, 
+						left=FALSE, 
+						labels=lbl_discrete(fmt = function(x) prettyNum(x, big.mark=',', scientific=FALSE))
+					)
+			) %>%
+			dplyr::select(
+				stay_id,
+				total_stay,
+				class_type_dom,
+				total_sec_amount,
+				cat_total_sec_amount,
+				violent,
+				drugs,
+				dwi,
+				theft,
+				which_side
+			)
+	#
+	ret[["pre"]] <- df_ %>% dplyr::filter(which_side == "PRE")
+	ret[["post"]] <- df_ %>% dplyr::filter(which_side == "POST")
+	#
+	return(ret)
+}
+#
+name_list <- check_exists("fn_offense_count")
+#
+fn_make_offense_stay_ecdf <- function(df_in_, offense_, max_stay_){
+	# uae df_stay_pretrial_offense_all
+	df_in_ %>%
+		dplyr::filter(
+			class_type_dom %in% offense_
+		) %>% 
+		dplyr::filter(
+			total_stay <= max_stay_
+		) %>%
+	ggplot(
+		aes(total_stay, color = which_side)
+	) +
+	stat_ecdf(
+		geom = "step",
+		pad = FALSE
+	) +
+	scale_x_continuous(
+		breaks = seq(0, as.numeric(max_stay_), 10)
+	) +
+	theme(
+		legend.title = element_blank(),
+		plot.title = element_text(size = 12, hjust = 0.5),
+		plot.subtitle = element_text(size = 10, hjust = 0.5)
+	) +
+	labs(
+		x = "Length of Stay", 
+		y = "Percentage", 
+		title = paste0("PTIA Length of Stay Empirical Cumulative Distribution for ", offense_, " Offenses"),
+		subtitle = paste0(FILE_DATE, " Data - Cutoff at ", max_stay_, " Days")
+	)
+}
+#
+name_list <- check_exists("fn_make_offense_stay_ecdf")
+#
+# modified 3/26/2024
+# added 3/19/2024
+fn_make_stay_histo <- function(df_in_, subtitle_in_, cutoff_, max_N_, x_breaks_by_=1, y_breaks_by_=25){
+	# use df_stay_pretrial_ offense_all
+	df_in_ %>%
+		dplyr::filter(
+			total_stay <= as.numeric(cutoff_)
+		) %>%
+		ggplot(
+			aes(total_stay, fill = factor(which_side, levels = c("PRE","POST")))
+		) +
+		geom_histogram( 
+			binwidth = 1,
+			alpha = 0.8) +
+		theme(
+			legend.title = element_blank(),
+			plot.title = element_text(size = 12, hjust = 0.5),
+			plot.subtitle = element_text(size = 10, hjust = 0.5)
+		) +
+		labs(
+			x = "Length of Stay", 
+			y = "Count", 
+			title = paste0("PTIA Length of Stay Histogram for M Offenses"),
+			subtitle = subtitle_in_
+		) +
+		scale_x_continuous(
+			limits = c(0, as.numeric(cutoff_)),
+			breaks = seq(0, as.numeric(cutoff_), by = x_breaks_by_)
+		) +
+		scale_y_continuous(
+			limits = c(0, max_N_),
+			breaks = seq(0, max_N_, by = y_breaks_by_)
+		)
+}
+#
+name_list <- check_exists("fn_make_stay_histo")
+#
+# added 3/18/2024
+fn_make_stay_density <- function(df_in_, cutoff_=60){
+	# use df_stay_pretrial_offense_all
+	#
+	# handle PTIA split
+	N_total_pre_ <- nrow(
+		df_in_ %>%
+			dplyr::filter(
+				which_side == "PRE"
+			)
+	)
+	N_total_post_ <- nrow(
+		df_in_ %>%
+			dplyr::filter(
+				which_side == "POST"
+		)
+	)
+	N_total_ <- N_total_pre_ + N_total_post_
+	#
+	# handle cutoff (number of stay days) trim
+	if (is.null(cutoff_)){
+		N_cutoff_ <- N_total_
+		N_cutoff_pre_ <- N_total_pre_
+		N_cutoff_post_ <- N_total_post_
+	} else {
+		df_in_ %<>%
+			dplyr::filter(
+				total_stay <= cutoff_
+			)
+		#
+		N_cutoff_pre_ <- nrow(
+			df_in_ %>%
+				dplyr::filter(
+					which_side == "PRE"
+			)
+		)
+		N_cutoff_post_ <- nrow(
+			df_in_ %>%
+				dplyr::filter(
+					which_side == "POST"
+			)
+		)
+		N_cutoff_ <- N_cutoff_pre_ + N_cutoff_post_
+	}
+	# data is now ready in df_in_
+	ret <- list()
+	ret[["overall"]] <-
+		df_in_ %>%
+		ggplot( aes( total_stay, fill = factor(which_side, levels = c("PRE", "POST")) ) ) +
+		geom_density( alpha = 0.7 )  +
+		scale_x_continuous(
+			limits = c(0, as.numeric(cutoff_)),
+			breaks = seq(0, as.numeric(cutoff_), by = 5)
+		) +
+		theme(
+			legend.title = element_blank()
+		) +
+		labs(
+			title = paste0("Pre- and Post-PTIA Length of Stay Density - Cutoff at ", cutoff_, " Days"),
+			x = "Stay in Days"
+		)
+	#
+	return(ret)
+}
+#
+name_list <- check_exists("fn_make_stay_density")
+#
+# Added 3/28/2024
+fn_make_compare_stay_count <- function(dcast_in_, stay_days_, title_, subtitle_){ 
+	# use new_dcast_1_, "1 Day", "Number of Stays of Length 1 Day", paste("PTIA Compared to", start_date, "to", stop_date)
+	dcast_in_ %>%
+		reshape2::melt(
+			id.vars="day_of_week"
+		) %>%
+		ggplot(
+			aes( day_of_week, value )
+		) +
+		geom_bar(
+			aes( fill = variable ),
+			stat = "identity",
+			position = position_dodge(0.8),
+			width = 0.7
+		) +
+		scale_x_continuous(
+			n.breaks = 7
+		) +
+		scale_fill_discrete(
+			labels = c("Compare", "PTIA")
+		) +
+		theme(
+			legend.title = element_blank(),
+			plot.title = element_text(size = 12, hjust = 0.5),
+			plot.subtitle = element_text(size = 10, hjust = 0.5)
+		) +
+		labs(
+			title = title_,
+			subtitle = subtitle_,
+			x = "Day of Week - Sunday is 1",
+			y = "Count"
+		)
+}
+#
+name_list <- check_exists("fn_make_compare_stay_count")
+#
+# Added 3/28/2024
+fn_make_compare_stay_pct <- function(dcast_in_, stay_days_, title_, subtitle_){ 
+	# use new_dcast_1_pct_, "1 Day", "Percent Number of Stays of Length 1 Day", paste("PTIA Compared to", start_date, "to", stop_date)
+	dcast_in_ %>%
+		reshape2::melt(
+			id.vars="day_of_week"
+		) %>%
+		ggplot(
+			aes( day_of_week, value )
+		) +
+		geom_bar(
+			aes( fill = variable ),
+			stat = "identity",
+			position = position_dodge(0.8),
+			width = 0.7
+		) +
+		scale_x_continuous(
+			n.breaks = 7
+		) +
+		scale_y_continuous(
+			limits = c(0,0.5),
+			expand = c(0,0),
+			n.breaks = 20
+		) +
+		scale_fill_discrete(
+			labels = c("Compare", "PTIA")
+		) +
+		theme(
+			legend.title = element_blank(),
+			plot.title = element_text(size = 12, hjust = 0.5),
+			plot.subtitle = element_text(size = 10, hjust = 0.5)
+		) +
+		labs(
+			title = title_,
+			subtitle = subtitle_,
+			x = "Day of Week - Sunday is 1",
+			y = "Percent"
+		)
+}
+#
+name_list <- check_exists("fn_make_compare_stay_pct")
+#
+# Added 3/28/2024
+fn_make_compare_stay_pct_line <- function(dcast_in_, title_, subtitle_){ 
+	# use new_dcast_1_pct_, "1 Day", "Percent Number of Stays of Length 1 Day", paste("PTIA Compared to", start_date, "to", stop_date)
+	dcast_in_ %>%
+		reshape2::melt(
+			id.vars="day_of_week"
+		) %>%
+		ggplot(
+			aes( x=day_of_week, y=value, group=variable, color=variable )
+		) +
+		geom_line(size=1.5) +
+		scale_x_continuous(
+			n.breaks = 7
+		) +
+		scale_y_continuous(
+			limits = c(0,0.5),
+			expand = c(0,0),
+			n.breaks = 20
+		) +
+		scale_color_discrete(
+			labels = c("Compare", "PTIA")
+		) +
+		theme(
+			legend.title = element_blank(),
+			plot.title = element_text(size = 12, hjust = 0.5),
+			plot.subtitle = element_text(size = 10, hjust = 0.5)
+		) +
+		labs(
+			title = title_,
+			subtitle = subtitle_,
+			x = "Day of Week - Sunday is 1",
+			y = "Percent"
+		)
+}
+#
+name_list <- check_exists("fn_make_compare_stay_pct_line")
+#
+# Added 3/28/2024
+fn_dcasts_classes_compare <- function(df_in_, classes_, stay_between_, start_date_, stop_date_){
+	# use df_stay_pretrial_offense_all, c(2,4) or 1, COMPARE_TO_DATE_START, COMPARE_TO_DATE_STOP
+	#
+	# gets all classes_ stays in POST and all stays in the comparison interval
+	# classes_ like "M" or c("F","L","H")
+	# as contained in df_in_
+	#
+	if (length(stay_between_) == 1){
+		stay_between_[2] <- stay_between_[1]
+	}
+	ret <- list()
+	# which_side PRE is explicit for clarity
+	dcast_ <- 
+		df_in_ %>%  
+		dplyr::filter(
+			class_type_dom %in% classes_ &
+			total_stay >= stay_between_[1] & total_stay <= stay_between_[2] &
+			(which_side == "POST" | (which_side == "PRE" & import_date >= start_date_ & import_date <= stop_date_))
+		) %>% 
+		dplyr::select(
+			import_date,
+			total_stay,
+			which_side
+		) %>%
+		dplyr::mutate(
+			day_of_week = lubridate::wday(import_date)
+		) %>% 
+		reshape2::dcast(
+			which_side + day_of_week ~ ., 
+			length
+		) %>%
+		dplyr::rename(
+			N = '.'
+		)
+	#
+	new_dcast_ <-
+		cbind(
+			dcast_%>%
+				dplyr::filter(
+					which_side == "PRE"
+				) %>%
+				dplyr::select(
+					day_of_week,
+					N
+				) %>%
+				dplyr::rename(
+					N_compare = N
+				),
+			dcast_ %>%
+				dplyr::filter(
+					which_side == "POST"
+				) %>%
+				dplyr::select(
+					N
+				) %>%
+				dplyr::rename(
+					N_PTIA = N
+				)
+		)
+	#
+	N_compare_total <- sum(new_dcast_$N_compare)
+	N_PTIA_total <- sum(new_dcast_$N_PTIA)
+	#
+	ret[["dcast"]] <- dcast_
+	ret[["new_dcast"]] <- new_dcast_
+	ret[["N_compare_total"]] <- N_compare_total
+	ret[["N_PTIA_total"]] <- N_PTIA_total
+	#
+	return(ret)
+}
+#
+name_list <- check_exists("fn_dcasts_classes_compare")
+#
+# added 3/30/2024
+fn_persons_classes_n_day_stays <- function(df_in_, classes_, stay_between_){
+	# over entire range of dates
+	# use df_stay_pretrial_offense_all
+	# stay_between_ like 1 or c(2,4)
+	# classes_ like "M" or c("L","H")
+	#
+	if (length(stay_between_) == 1){
+		stay_between_[2] <- stay_between_[1]
+	}
+	#
+	ret <- list()
+	df_persons_n_day_all_ <-
+		df_in_ %>%  
+			dplyr::filter(
+				class_type_dom %in% classes_ &
+				total_stay %in% stay_between_
+			) %>% 
+			dplyr::select(
+				stay_id,
+				which_side
+			) %>%
+		dplyr::inner_join(
+			df_inmate_stays %>%
+				dplyr::select(
+					stay_id,
+					name
+				),
+			by = "stay_id"
+		) %>%
+		dplyr::select(
+			name,
+			stay_id,
+			which_side
+		)
+	#
+	df_persons_n_day_only_pre_ <-
+		dplyr::anti_join(
+			df_persons_n_day_all_ %>%
+				dplyr::filter(
+					which_side == "PRE"
+				) %>%
+				dplyr::select(
+					name
+				) %>%
+				dplyr::distinct(),
+			df_persons_n_day_all_ %>%
+				dplyr::filter(
+					which_side == "POST"
+				) %>%
+				dplyr::select(
+					name
+				) %>%
+				dplyr::distinct(),
+			by = "name"
+		)
+	#
+	df_persons_n_day_only_post_ <-
+		dplyr::anti_join(
+			df_persons_n_day_all_ %>%
+				dplyr::filter(
+					which_side == "POST"
+				) %>%
+				dplyr::select(
+					name
+				) %>%
+				dplyr::distinct(),
+			df_persons_n_day_all_ %>%
+				dplyr::filter(
+					which_side == "PRE"
+				) %>%
+				dplyr::select(
+					name
+				) %>%
+				dplyr::distinct(),
+			by = "name"
+		)	
+	#
+	df_persons_n_day_only_both_ <-
+		dplyr::inner_join(
+			df_persons_n_day_all_ %>%
+				dplyr::filter(
+					which_side == "POST"
+				) %>%
+				dplyr::select(
+					name
+				) %>%
+				dplyr::distinct(),
+			df_persons_n_day_all_ %>%
+				dplyr::filter(
+					which_side == "PRE"
+				) %>%
+				dplyr::select(
+					name
+				) %>%
+				dplyr::distinct(),
+			by = "name"
+		)
+	#
+	ret[["all"]] <- df_persons_n_day_all_
+	ret[["pre"]] <- df_persons_n_day_only_pre_
+	ret[["post"]] <- df_persons_n_day_only_post_
+	ret[["both"]] <- df_persons_n_day_only_both_
+	#
+	return(ret)
+}
+#
+name_list <- check_exists("fn_persons_classes_n_day_stays")
+#
+```
+
+{r, eval=FALSE, echo=FALSE}
+# STOP HERE STOP HERE STOP HERE STOP HERE STOP HERE STOP HERE STOP HERE STOP HERE STOP HERE STOP HERE STOP HERE STOP HERE 
+
+# added 2/15/2024
+# added modified 3/15/2024
+fn_make_sec_amount_pop <- function(df_in_all_, df_bundles_, class_filter_=NULL, offense_filter_=NULL, cutoff_=0 ){
+	# use df_stay_id_pretrial_total_sec_bond_min_all 
+	# and df_combined_pretrial_coded_bond_class_bundle_min
+	#
+	# class_filter_ must be atomic or vector composed of members of class_type_dom
+	# "U" "M" "F" "L" "H" found in second character of coded_bond_class
+	# enter as c("U","F")
+	#
+	# offense_filter_ refers to characters 3 - 6 of coded_bond_class
+	# may only be only ONE selected from "violent", "drugs", "dwi", "theft"
+	# all bundles with any of those offenses will be included (query uses OR)
+	#
+	# cutoff_ for total_sec_amount <=
+	# if cutoff_ is 0, ignore it, i.e., use all values
+	#
+	# make side-by-side bar charts
+	# data is very simple
+	# columns category (formatted ranges), N, which (PRE, POST, ALL)
+	# counts
+	fmt_dollar <- scales::dollar_format()
+	#
+	# handle class_filter_
+	if (!is.null(class_filter_)){
+		if (!all(class_filter_ %in% CLASSES)){
+			return(paste("ERROR: class_filter_ must be omitted or one or more of", paste(CLASSES, collapse = " ")))
+		} else {
+		df_bundles_ %<>%
+				dplyr::filter(
+					stringr::str_sub(coded_bond_class,2,2) %in% class_filter_
+				)
+		}
+	}
+	#
+	# handle offense_filter_
+	if (!is.null(offense_filter_)){
+		if (!all(offense_filter_ %in% OFFENSES)){
+			return(paste("ERROR: offense_filter_ must be omitted or one or more of", paste(OFFENSES, collapse = " ")))
+		} else {
+		df_bundles_ %<>%
+			dplyr::filter(
+				ifelse(
+					("violent" %in% offense_filter_ & stringr::str_sub(coded_bond_class,3,3) == "1") |
+					("drugs" %in% offense_filter_ & stringr::str_sub(coded_bond_class,4,4) == "1") |
+					("dwi" %in% offense_filter_ & stringr::str_sub(coded_bond_class,5,5) == "1") |
+					("theft" %in% offense_filter_ & stringr::str_sub(coded_bond_class,6,6) == "1"),
+					TRUE,FALSE
+				)
+			)
+		}
+	}
+	#
+	max_amount_ <- max(df_in_all_$total_sec_amount)
+	#
+	df_data_ <- 
+		df_in_all_ %>% 
+			dplyr::filter(
+				total_sec_amount <= ifelse(cutoff_ == 0, max_amount_, cutoff_)
+			) %>%
+		dplyr::select(
+			which_offense,
+			coded_id
+		) %>%
+		dplyr::inner_join(
+			df_bundles_,
+			by = "coded_id"
+		) %>%
+		dplyr::mutate(
+			class_type_dom = stringr::str_sub(coded_bond_class,2,2)
+		) %>%
+		dplyr::select(
+			which_offense,
+			class_type_dom
+		) %>%
+		dplyr::group_by(
+			which_offense,
+			class_type_dom
+		) %>% 
+		dplyr::summarise(
+			N = n()
+		) %>%
+		dplyr::ungroup()
+	#
+	max_N_ <- 100 * ceiling(max(df_data_$N)/100)
+	#
+	ret <- list()
+	#
+	ret[["N"]] <-
+	df_data_ %>%
+		ggplot( aes(x = factor(which_side, levels = c("PRE", "POST")), y = N, 
+						fill = factor(class_type_dom, levels = c("U","M","L","H","F"))
+					)
+		)  +
+		geom_bar(
+			stat = 'identity',
+			position = position_dodge(.9),
+			linewidth = 3
+		) +
+		ylim(0, max_N_) +
+		geom_text(
+			aes(label = N), 
+			fontface = "bold", vjust = -0.5,
+			position = position_dodge(.9), size = 4
+		) +
+		labs(
+			x = "PTIA Date", 
+			y = "Count", 
+			title = paste0(
+				"\nInmates by Dominant Offense", 
+				ifelse(is.null(class_filter_) & is.null(offense_filter_), "", " For "),
+				ifelse(is.null(class_filter_), "", paste(class_filter_, collapse = " ")),
+				ifelse(!is.null(class_filter_) & !is.null(offense_filter_), " and ", ""),
+				ifelse(is.null(offense_filter_), "", paste(offense_filter_, collapse = " ")),
+				ifelse(cutoff_ == 0, "", paste0(" Cutoff at ", fmt_dollar(cutoff_))),
+				"\n", FILE_DATE, " Data")
+		) +
+		theme(
+			plot.title = element_text(hjust = 0.5), 
+			axis.title.x = element_text(face="bold", colour="red", size = 12),
+			axis.title.y = element_text(face="bold", colour="red", size = 12),
+			legend.title = element_blank()
+		)
+	#
+	return(ret)
+}
+#
+name_list <- check_exists("fn_make_sec_amount_pop")
+#
+
+
+# added 3/17/2024
+fn_make_M_compare_plot <- function(df_in_, subtitle_in_, cutoff_){
+	# df_in_ must have columns total_stay and which_side
+	 df_in_ %>%
+		ggplot(
+			aes(total_stay, color = factor(which_side, levels = c("PRE","POST")))
+		) +
+		stat_ecdf(
+			geom = "step",
+			pad = FALSE
+		) +
+		theme(
+			legend.title = element_blank(),
+			plot.title = element_text(size = 12, hjust = 0.5),
+			plot.subtitle = element_text(size = 10, hjust = 0.5)
+		) +
+		labs(
+			x = "Length of Stay", 
+			y = "Percentage", 
+			title = paste0("PTIA Length of Stay Empirical Cumulative Distribution for M Offenses"),
+			subtitle = subtitle_in_
+		) +
+		scale_x_continuous(
+			limits = c(1, cutoff_),
+			breaks = seq(1, cutoff_, by = 1)
+		) +
+		scale_y_continuous(
+			limits = c(0, 1),
+			breaks = seq(0, 1, by = 0.1)
+		)
+}
+#
+name_list <- check_exists("fn_make_M_compare_plot")
+#
+# modified 3/18/2024 to use df_stay_id_pretrial_total_sec_bond_min_all
+# added 3/18/2024 from 444_functions
+fn_make_sec_amount_hist <- function(df_, start_at_=0, cutoff_, binw_, breakw_, use_long_title_=TRUE){
+	# use df_stay_id_pretrial_total_sec_bond_min_all
+	# counts on left vertical axis
+	# percentages on right
+	#
+	N_total_ <- nrow(
+		df_
+	)
+	#
+	N_ <- nrow(
+		df_ %>%
+			dplyr::filter(
+				total_sec_amount >= start_at_ &
+				total_sec_amount <= cutoff_
+			)
+		)
+	#
+	fmt_dollar <- scales::dollar_format()
+	title_ <- if(use_long_title_){
+		paste0(
+			N_, 
+			' of a Total ',
+			N_total_,
+			' Stays, ', 
+			ifelse(start_at_ > 0, paste0(" Start at ", fmt_dollar(start_at_)), ""),
+			' Cutoff at ', fmt_dollar(cutoff_), ' - Bin Size ', fmt_dollar(binw_)
+		)
+	} else{
+		title_ <- paste0(N_, " Stays")
+	}
+	#
+	df_ %>%
+		dplyr::select(
+			total_sec_amount
+		) %>%
+		dplyr::filter(
+			total_sec_amount >= start_at_ &
+			total_sec_amount <= cutoff_
+		) %>%
+		ggplot(aes(x = total_sec_amount)) + 
+		geom_histogram( 
+			binwidth = binw_, 
+			fill = "#69b3a2", 
+			color = "#e9ecef", 
+			alpha = 0.9
+		) +
+		scale_x_continuous(
+			limits = c(start_at_, cutoff_+50),
+			breaks = seq(start_at_, cutoff_, by = breakw_),
+			labels = scales::dollar_format()
+		) +
+		scale_y_continuous(
+			sec.axis = sec_axis( 
+				trans = ~.*100/N_total_, 
+				name = paste("Percent of the", N_total_, "stays")
+			)
+		) +
+		labs(
+			x = 'Secured Bond in Dollars', 
+			y = 'Number of Occurences', 
+			title = title_
+		) +
+		theme(
+		  plot.title = element_text(size = 12, hjust = 0.5)
+		)
+}
+#
+name_list <- check_exists("fn_make_sec_amount_hist")
+#
+
+
+```
+
+```{r save}
+# produce the RData file that contains all these functions
+save(
+	list=name_list, 
+	file=paste0(RDataPath,"BBB_functions.RData")
+)
+```

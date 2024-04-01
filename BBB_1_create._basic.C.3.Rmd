@@ -1,0 +1,480 @@
+---
+title: "Buncombe Jail EJ Read CSV and Preparation"
+author: "DIH"
+date: "2024-03-30"
+output: html_document
+params:
+  MAKE_BASE_FILES: TRUE
+  READ_BASE_FILES: FALSE
+  MAKE_FILES: TRUE
+  READ_FILES: FALSE
+  SHOW_SCRIPT: TRUE
+  SHOW_STR: FALSE
+---
+
+```{r, setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r, message=FALSE, warning=FALSE, echo=params$SHOW_SCRIPT}
+# Ref:
+# from console create script of all R chunks
+# knitr::purl(input="Report_A_all_dates.Rmd", output="Report_A_all_dates_script.r", documentation=0)
+```
+  
+THIS USES THE STAYS SUMMARY FILE TO SELECT daily_charges RECORDS.  
+
+This program performs data preparation, reading and writing (to RData files) the files needed for reports. Some csv and zip files are also written. Directory paths, as well as FILE_DATE, are located in the .Rprofile file so that they will be universally available.  
+  
+The execution of the steps in this Rmd file are determined by the params at the head of this file. This allows a minimal number of reads and writes depending on what tasks are to be carried out.  
+  
+```{r, message=FALSE, warning=FALSE, echo=params$SHOW_SCRIPT}
+# essential file
+load(file=paste0(RDataPath,"BBB_functions.RData"))
+```
+
+EJ 12/28/2023 but see written notes of 12/30/23  
+When someone appears before a magistrate, for each charge they get one of the following:  
+Written Promise. Basically just means you signed a piece of paper promising to show up for your court date. There’s no financial penalty if you don’t, but you will presumably have an order issued for your arrest (OFA).  
+Bond - Unsecured. This is somewhat similar to a written promise in that you are free to walk out, but in this case you also face a financial penalty if you don’t show up (and presumably an OFA).  
+Bond - Secured. In this case, you can’t get out of jail unless you either pay the bond in full or get a bondsman to pay it for you (generally paying the bondman 10%, non-refundable). Obviously lower bond amounts basically leave you stuck paying it since the fee isn’t worth the risk for the bondsman.  
+No Bond. You cannot get out of jail without a judge changing the bond in some way.  
+Note that you have to pay attention to whether the bond is active or not (in the bond_status field) <<<<<<<< 12/30/23 video do not use bond_status  
+
+  
+### INMATE STAYS USING THE stays-<FILE_DAYE> CSV FILE:  
+This dataframe will be used later.  
+Add stay to df_inmate_stays  
+rename id
+hash name
+change NULL to naremove incomplete rows
+  
+```{r read_stays, eval=params$MAKE_BASE_FILES, echo=params$MAKE_FILES}
+set.seed(RANSEED)
+df_inmate_stays_0 <- readr::read_csv(paste0(csvPath,"stays-",FILE_DATE,".csv"))
+#
+# count of incomplete rows
+nrow(df_inmate_stays_0) - nrow(df_inmate_stays_0 %>% dplyr::filter(end_date == "NULL"))
+#
+# remove incomplete rows
+# hash name
+df_inmate_stays_0 %<>%
+	dplyr::filter(
+		end_date != "NULL"
+	) %>%
+	dplyr::mutate(
+		end_date = as.Date(end_date, format = "%Y-%m-%d")
+	) %>%
+	dplyr::mutate(
+		name = md5(name)
+	)
+#
+# calculate stay length
+#
+df_inmate_stays <- 
+  df_inmate_stays_0  %>%
+	dplyr::mutate(
+		stay = end_date - start_date + 1
+	) %>% 
+	dplyr::rename(
+		stay_id = id
+	) %>%
+	dplyr::filter(
+		use_flag == 1
+	)  %>%
+	dplyr::select(
+		-c(note, use_flag)
+	)
+#
+names(df_inmate_stays)
+#
+nrow(df_inmate_stays)
+```
+  
+add multiplicity:
+  
+```{r mult, eval=params$MAKE_BASE_FILES, message=FALSE, warning=FALSE, echo=params$SHOW_SCRIPT}
+df_inmate_stays <-
+	df_inmate_stays %>%
+		dplyr::select(
+			name
+		) %>%
+		dplyr::count(
+			name
+		) %>%
+		dplyr::rename(
+			mult = n
+		) %>%
+	dplyr::inner_join(
+		df_inmate_stays,
+		by = "name"
+	)
+#
+names(df_inmate_stays)
+#
+nrow(df_inmate_stays)
+#
+fn_save_zip_it(df_inmate_stays, RDataPath)
+```
+```{r, eval=params$READ_BASE_FILES, echo=params$READ_FILES}
+load(file=paste0(RDataPath,"df_inmate_stays.RData"))
+```
+```{r, eval=params$SHOW_STR, message=FALSE, warning=FALSE, echo=params$SHOW_SCRIPT}
+# df_inmate_stays
+str(df_inmate_stays, vec.len=1, give.attr=FALSE)
+```
+  
+How many instances of repeat offenders?  
+  
+```{r repeat_offenders, eval=params$MAKE_BASE_FILES, message=FALSE, warning=FALSE, echo=params$SHOW_SCRIPT}
+df_freq_repeats <-
+	df_inmate_stays %>% 
+		reshape2::dcast(
+			name ~ .
+		) %>% 
+		dplyr::rename(
+			N = '.'
+		) %>% 
+		reshape2::dcast(
+			N ~ . 
+		) %>%
+		dplyr::rename(
+			Repeats = N,
+			N = '.'
+		)
+#
+(df_freq_repeats <-
+	cbind(
+		df_freq_repeats,
+		df_freq_repeats$N/sum(df_freq_repeats$N)
+	) %>%
+	dplyr::rename(
+		pct = 3
+	) %>%
+	dplyr::mutate(
+		pct = format(100*pct, digits = 2)
+	))
+#
+sum(df_freq_repeats$N)
+```
+  
+### CHARGE DEFINITIONS:  
+  
+csv file should be the latest available.  
+  
+Added 2/6/2024 class_type_sup  
+The charge_def data is modified by adding a column class_type_sup that maps as:  
+class_type_sup to class_type and level  
+U to U  
+M to M  
+F to F when level < 5  
+L to F when level 5 or 6  
+H to F when level > 6  
+  
+```{r read_charge_defs, eval=params$MAKE_BASE_FILES, echo=params$MAKE_FILES}
+df_charge_def_0 <- readr::read_csv(paste0(csvPath,"charge_definitions-",FILE_DATE,".csv")) %>%
+  dplyr::rename(
+    charge_def_id = id
+  )
+# replace NULL with NA using package naniar
+# https://naniar.njtierney.com/articles/replace-with-na.html
+#
+df_charge_def <- 
+  df_charge_def_0 %>% 
+	naniar::replace_with_na_if(
+		.predicate = c(is.character, is.numeric),
+		condition = ~.x == "NULL"
+	) %>%
+	dplyr::mutate(
+		class_type_sup = ifelse(class_type == "U", "U",
+			( ifelse(class_type == "M", "M",
+				( ifelse(class_type == "F" & level < 5, "F",
+					( ifelse(class_type == "F" & level %in% c(5,6), "L",
+						( ifelse(class_type == "F" & level > 6, "H", NA )))))))))
+		)
+#
+names(df_charge_def)
+#
+fn_save_zip_it(df_charge_def, RDataPath)
+```
+```{r, echo=params$READ_FILES}
+# must be available
+load(file=paste0(RDataPath,"df_charge_def.RData"))
+```
+```{r, eval=params$SHOW_STR, message=FALSE, warning=FALSE, echo=params$SHOW_SCRIPT}
+# df_charge_def
+str(df_charge_def, vec.len=1, give.attr=FALSE)
+```
+  
+### DAILY CHARGES:  
+EJ 1/26/24 chanty WE DO CARE ABOUT daily_charges.bond_status  
+must be ACTI or ACTIVE  
+1/20/2024 WE DO CARE ABOUT BOND AMOUNT  
+do not care about docket_number  
+  
+```{r read_daily_charges, eval=params$MAKE_BASE_FILES, echo=params$MAKE_FILES}
+df_daily_charges_0 <- readr::read_csv(paste0(csvPath,"daily_charges-",FILE_DATE,".csv"))
+#
+nrow(df_daily_charges_0 %>% dplyr::filter(docket_number == "NULL"))
+#
+# filter on bond_status either ACTI or ACTIVE
+#
+df_daily_charges_0 %>% reshape2::dcast(bond_status ~ ., length)
+#
+df_daily_charges <- 
+  df_daily_charges_0 %>%
+	dplyr::filter(
+		bond_status %in% c("ACTIVE", "ACTI")
+	) %>%
+	dplyr::select(
+		-c( bond_status, docket_number)
+	) %>%
+	dplyr::mutate(
+		bond_amount = round( bond_amount/100 )
+	)
+#
+names(df_daily_charges)
+#
+df_daily_charges %>% reshape2::dcast(bond_type ~ .)
+df_daily_charges %>% reshape2::dcast(status ~ .)
+#
+fn_save_zip_it(df_daily_charges, RDataPath)
+```
+```{r, eval=params$READ_BASE_FILES, echo=params$READ_FILES}
+load(file=paste0(RDataPath,"df_daily_charges.RData"))
+```
+```{r, eval=params$SHOW_STR, message=FALSE, warning=FALSE, echo=params$SHOW_SCRIPT}
+# df_daily_charges
+str(df_daily_charges, vec.len=1, give.attr=FALSE)
+```
+
+df_daily_charges contains `r nrow(df_daily_charges %>% dplyr::filter(is.na(charge)))` rows with NA charge and  
+`r nrow(df_daily_charges %>% dplyr::filter(is.na(bond_type)))` rows with NA bond_type and  
+`r nrow(df_daily_charges %>% dplyr::filter(is.na(status)))` rows with NA status  
+  
+Remove these rows  
+```{r df_daily_charges_no_NA, eval=params$MAKE_BASE_FILES, echo=params$MAKE_FILES}
+df_daily_charges_no_NA <- 
+	df_daily_charges %>% 
+		dplyr::filter(
+			!(is.na(charge) | is.na(bond_type) | is.na(status))
+		)
+#
+nrow(df_daily_charges) - nrow(df_daily_charges_no_NA)
+rm(df_daily_charges)
+fn_save_zip_it(df_daily_charges_no_NA, RDataPath)
+```
+  
+check to see if df_charge_def has matches  
+  
+```{r check_charge_def, eval=params$MAKE_BASE_FILES, echo=params$MAKE_FILES}
+df_daily_charges_norm_no_NA_no_match <-
+	dplyr::anti_join(
+		df_daily_charges_no_NA,
+		df_charge_def,
+		by = c( "charge"="charge", "description"="description")
+	) %>%
+	dplyr::arrange(
+		charge,
+		description,
+		defendant_id
+	)
+#
+nrow(df_daily_charges_norm_no_NA_no_match)
+#
+if (nrow(df_daily_charges_norm_no_NA_no_match) > 0) {
+	fn_save_zip_it(df_daily_charges_norm_no_NA_no_match, RDataPath)
+}
+```
+	
+Add charge_def_id and remove charge and description  
+Use of inner join drops the no match rows  
+  
+```{r df_daily_charges_norm_no_NA, eval=params$MAKE_BASE_FILES, echo=params$MAKE_FILES}
+df_daily_charges_norm_no_NA <-
+	dplyr::inner_join(
+		df_daily_charges_no_NA,
+		df_charge_def %>%
+			dplyr::select(
+				charge_def_id,
+				charge,
+				description
+			),
+		by = c( "charge"="charge", "description"="description")
+	) %>%
+	dplyr::select(
+		-c(charge, description)
+	)
+#
+nrow(df_daily_charges_norm_no_NA) - nrow(df_daily_charges_no_NA)
+#
+rm(df_daily_charges_no_NA)
+fn_save_zip_it(df_daily_charges_norm_no_NA, RDataPath)
+```
+  
+FINISH CLEANING:  
+  
+combine FEDE and FEDERAL into FEDERAL  
+combine SENT and SENTENCED into SENTENCED  
+combine PRET and PRE-TRIAL into PRE-TRIAL  
+combine DISM and DISMISSED into DISMISSED  
+combine OTHR and OTHER into OTHER
+  
+THIS IS THE df_daily_charges VARIANT THAT WILL BE USED  
+  
+```{r df_daily_combined_filter, eval=params$MAKE_BASE_FILES, echo=params$MAKE_FILES}
+df_daily_charges_norm_no_NA %>% reshape2::dcast(status ~ ., length)
+#
+df_daily_charges_norm_no_NA_clean <-
+	df_daily_charges_norm_no_NA %>%
+		dplyr::mutate(
+			status = ifelse(status == "FEDE", "FEDERAL", (
+				ifelse(status == "SENT", "SENTENCED", (
+					ifelse(status == "DISM", "DISMISSED", (
+						ifelse(status == "PRET", "PRE-TRIAL", (
+							ifelse(status == "OTHR", "OTHER", status
+			)))))))))
+		)
+#
+names(df_daily_charges_norm_no_NA_clean)
+#
+df_daily_charges_norm_no_NA_clean %>% reshape2::dcast( status ~ ., length )
+#
+nrow(df_daily_charges_norm_no_NA_clean)
+rm(df_daily_charges_norm_no_NA)
+fn_save_zip_it(df_daily_charges_norm_no_NA_clean, RDataPath)
+```
+  
+### DAILY INMATES:  
+  
+https://stackoverflow.com/questions/42052078/correct-syntax-for-mutate-if  
+  
+Hash name here and in df_inmate_stays  
+  
+Rename daily inmate id to defendant_id  
+
+```{r read_daily_inmates, eval=params$MAKE_BASE_FILES, echo=params$MAKE_FILES}
+set.seed(RANSEED)
+# NOTE THIS RENAMING!
+df_daily_inmates_0 <- readr::read_csv(paste0(csvPath,"daily_inmates-",FILE_DATE,".csv")) %>%
+  dplyr::rename(
+    defendant_id = id
+  ) %>%
+  dplyr::mutate(
+	name = md5(name)
+  )
+#
+df_daily_inmates_0 %>% reshape2::dcast( race ~ ., length )
+df_daily_inmates_0 %>% reshape2::dcast( gender ~ ., length )
+#
+df_daily_inmates <-
+  df_daily_inmates_0 %>%
+	dplyr::select(
+		-c(age, height, weight, court_date, released, holding_facility)
+	) %>%
+	dplyr::mutate(
+		total_bond = ifelse( total_bond == "NULL", NA, round(as.numeric(total_bond)/100))
+	)
+#
+names(df_daily_inmates)
+#
+# check on dups:
+nrow(df_daily_inmates %>%  
+	dplyr::group_by(
+		import_date,
+		defendant_id
+	) %>% 
+	dplyr::count() %>% 
+	dplyr::filter(n > 1)
+)
+#
+fn_save_zip_it(df_daily_inmates, RDataPath)
+```
+```{r, eval=params$READ_BASE_FILES, echo=params$READ_FILES}
+load(file=paste0(RDataPath,"df_daily_inmates.RData"))
+```
+```{r, eval=params$SHOW_STR, message=FALSE, warning=FALSE, echo=params$SHOW_SCRIPT}
+# df_daily_inmates
+str(df_daily_inmates, vec.len=1, give.attr=FALSE)
+```
+```{r CURRENT_DATES, eval=params$SHOW_STR, message=FALSE, warning=FALSE, echo=params$SHOW_SCRIPT}
+#
+# vector of import_date:
+#
+CURRENT_DATES <- unique(df_daily_inmates$import_date)
+length(CURRENT_DATES)
+class(CURRENT_DATES[1])
+#
+save(CURRENT_DATES, file=paste0(RDataPath,"CURRENT_DATES.RData"))
+```
+  
+### HERE IS THE PART OF THIS SCRIPT THAT COMBINES STAYS SUMMARY AND DAILY CHARGES.  
+
+At this point, available dataframes are: df_daily_inmates, df_daily_charges_norm_no_NA_clean, df_charge_def, df_inmate_stays  
+  
+Another completely unnormalized data frame: df_inmates_stays_spread  
+Get all the dates that belong to each row in stays (accompanied by defendant_id)
+  
+```{r df_inmates_stays_spread, eval=params$MAKE_BASE_FILES, echo=params$MAKE_FILES}
+# https://dplyr.tidyverse.org/reference/join_by.html#overlap-joins
+#
+by <- dplyr::join_by(
+	name,
+	between(import_date, start_date, end_date)
+)
+#
+# retain name for convenience but use stay_id for joins
+#
+df_inmates_stays_spread <-
+	dplyr::left_join(
+		df_daily_inmates %>%
+			dplyr::select(
+				defendant_id,
+				name,
+				import_date
+			),
+		df_inmate_stays %>%
+			dplyr::select(
+				stay_id,
+				name,
+				start_date,
+				end_date
+			),
+		by
+	) %>%
+	tidyr::drop_na() %>%
+	dplyr::select(
+		stay_id,
+		defendant_id,
+		name,
+		import_date
+	)
+#
+names(df_inmates_stays_spread)
+#
+nrow(df_inmates_stays_spread)
+#
+rm(by)
+#
+fn_save_zip_it(df_inmates_stays_spread, RDataPath)
+```
+  
+Added 3/27/2024
+```{r df_buncombe_holidays, eval=params$MAKE_BASE_FILES, echo=params$MAKE_FILES}
+df_buncombe_holidays <- readr::read_csv(
+	paste0(csvPath,"buncombe_holidays.csv"),
+	col_types = cols(col_date(),col_character())
+)
+#
+names(df_buncombe_holidays)
+#
+nrow(df_buncombe_holidays)
+#
+fn_save_zip_it(df_buncombe_holidays, RDataPath)
+```
+
+Available data frames:  
+  
+```{r}
+ls( pattern = "^df_" )
+```
+  

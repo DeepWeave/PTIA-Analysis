@@ -1,0 +1,333 @@
+---
+title: "Buncombe Jail EJ Develop Charge Bundles"
+author: "DIH"
+date: "2024-02-30"
+output: html_document
+params:
+  MAKE_FILES: TRUE
+---
+
+```{r, setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r, message=FALSE, warning=FALSE}
+# Ref:
+# from console create script of all R chunks
+# knitr::purl(input="Report_A_all_dates.Rmd", output="Report_A_all_dates_script.r", documentation=0)
+#
+# and
+#
+# you can bail out by placing 
+# knitr::knit_exit() 
+# between ticks  
+```
+  
+THIS USES THE STAYS SUMMARY FILE TO SELECT daily_charges RECORDS,  
+BUT NARROWS STAYS TO WHAT ARE IN df_stay_id_pretrial_total_sec_bond_min  
+
+Directory paths, as well as FILE_DATE, are located in the .Rprofile file so that they will be universally available.  
+  
+```{r, message=FALSE, warning=FALSE}
+# essential files
+load(file=paste0(RDataPath,"BBB_functions.RData"))
+#
+load(file=paste0(RDataPath,"df_charge_def.RData"))
+load(file=paste0(RDataPath,"df_inmate_stays.RData"))
+#
+load(file=paste0(RDataPath,"df_inmates_stays_spread.RData")) # ADD
+load(file=paste0(RDataPath,"df_daily_charges_norm_no_NA_clean.RData")) # ADD
+```
+
+### DEVELOP CHARGE BUNDLES  
+
+```{r df_daily_combined}
+df_daily_combined <-
+	dplyr::inner_join(
+		df_inmates_stays_spread,
+		df_daily_charges_norm_no_NA_clean,
+		by = "defendant_id"
+	) %>%
+	dplyr::distinct() %>%
+	dplyr::arrange(
+		stay_id,
+		defendant_id
+	)
+#
+names(df_daily_combined)
+#
+nrow(df_daily_combined)
+#
+fn_save_zip_it(df_daily_combined, RDataPath)
+#
+df_daily_combined %>% reshape2::dcast(status ~ ., length)
+#
+df_daily_combined %>% reshape2::dcast(bond_type ~ ., length)
+#
+df_daily_combined %>% reshape2::dcast(status ~ ., length)
+```
+
+Keep status PRE-TRIAL only  
+Note selection of distinct records  
+  
+```{r df_daily_combined_pretrial}
+df_daily_combined_pretrial <-
+	df_daily_combined %>%
+		dplyr::filter(
+			status == "PRE-TRIAL" 
+		) %>%
+	dplyr::distinct() %>%
+	dplyr::arrange(
+		stay_id,
+		defendant_id
+	)
+#
+names(df_daily_combined_pretrial)
+#
+nrow(df_daily_combined_pretrial)
+#
+fn_save_zip_it(df_daily_combined_pretrial, RDataPath)
+#
+df_daily_combined_pretrial %>% reshape2::dcast(status ~ ., length)
+df_daily_combined_pretrial %>% reshape2::dcast(bond_type ~ ., length)
+```
+
+```{r df_daily_combined_mod}
+df_daily_combined_mod <- 
+	fn_daily_combined_mod(
+		df_daily_combined, 
+		df_charge_def
+	) %>%
+	dplyr::arrange(
+		stay_id,
+		defendant_id
+	)
+#
+nrow(df_daily_combined) - nrow(df_daily_combined_mod)
+#
+names(df_daily_combined_mod)
+#
+nrow(df_daily_combined_mod)
+#
+fn_save_zip_it(df_daily_combined_mod, RDataPath)
+```
+   
+PART B. status PRE-TRIAL  
+  
+```{r df_daily_combined_pretrial_mod}
+df_daily_combined_pretrial_mod <- 
+	fn_daily_combined_mod(
+		df_daily_combined_pretrial, 
+		df_charge_def
+	) %>%
+	dplyr::arrange(
+		stay_id,
+		defendant_id
+	)
+#
+nrow(df_daily_combined_pretrial) - nrow(df_daily_combined_pretrial_mod)
+#
+names(df_daily_combined_pretrial_mod)
+#
+nrow(df_daily_combined_mod) - nrow(df_daily_combined_pretrial_mod)
+#
+nrow(df_daily_combined_pretrial_mod)
+#
+fn_save_zip_it(df_daily_combined_pretrial_mod, RDataPath)
+```
+
+```{r df_stay_id_pretrial_total_sec_bond_min, message=FALSE, warning=FALSE}
+df_stay_id_pretrial_total_sec_bond_min <- 
+	fn_stay_id_pretrial_total_sec_bond(
+		df_daily_combined_pretrial_mod
+	)
+#
+names(df_stay_id_pretrial_total_sec_bond_min)
+#
+nrow(df_stay_id_pretrial_total_sec_bond_min)
+#
+fn_save_zip_it(df_stay_id_pretrial_total_sec_bond_min, RDataPath)
+```
+
+```{r df_daily_combined_pretrial_mod_mult_stay_id_min, warning=FALSE, message=FALSE}
+# this ignores columns other than those explicitly in the dcast
+df_daily_combined_pretrial_mod_mult_stay_id_min <- 
+	fn_daily_combined_mod_mult_dcast(
+		df_daily_combined_pretrial_mod,
+		df_stay_id_pretrial_total_sec_bond_min
+	) %>%
+	dplyr::arrange(
+		stay_id,
+		import_date
+	)
+#
+nrow(df_daily_combined_pretrial_mod_mult_stay_id_min)
+names(df_daily_combined_pretrial_mod_mult_stay_id_min)
+#
+fn_save_zip_it(df_daily_combined_pretrial_mod_mult_stay_id_min, RDataPath)
+```
+```{r list_daily_combined_pretrial_mod_mult_mod_coded_min, warning=FALSE, message=FALSE}
+list_daily_combined_pretrial_mod_mult_mod_coded_min <-
+	fn_daily_combined_mod_mult_mod_coded(
+		df_daily_combined_pretrial_mod_mult_stay_id_min,
+		df_daily_combined_pretrial_mod
+	)
+#
+df_daily_combined_pretrial_mod_mult_mod_coded_min <- list_daily_combined_pretrial_mod_mult_mod_coded_min[["df_bundled"]]
+#df_combined_pretrial_coded_bundle_min <- list_daily_combined_pretrial_mod_mult_mod_coded_min[["bundle_def_coded"]]
+df_combined_pretrial_coded_bond_class_bundle_min <- list_daily_combined_pretrial_mod_mult_mod_coded_min[["bundle_def_coded_bond_class"]]
+#
+nrow(df_daily_combined_pretrial_mod_mult_mod_coded_min)
+#nrow(df_combined_pretrial_coded_bundle_min)
+nrow(df_combined_pretrial_coded_bond_class_bundle_min)
+#
+names(df_daily_combined_pretrial_mod_mult_mod_coded_min)
+#names(df_combined_pretrial_coded_bundle_min)
+names(df_combined_pretrial_coded_bond_class_bundle_min)
+#
+fn_save_zip_it(df_daily_combined_pretrial_mod_mult_mod_coded_min, RDataPath)
+#fn_save_zip_it(df_combined_pretrial_coded_bundle_min, RDataPath)
+#fn_save_zip_it(df_combined_pretrial_coded_bond_class_bundle_min, RDataPath)
+```
+### BUNDLES DCASTS  
+  
+Number of bundles by stay_id  
+How many with more than one bundle?  
+  
+filtered on PRE-TRIAL  
+  
+```{r list_bundles_per_stay_id_pretrial_min, warning=FALSE, message=FALSE}
+list_bundles_per_stay_id_pretrial_min <- 
+	fn_bundles_per_stay_id(
+		df_daily_combined_pretrial_mod_mult_mod_coded_min
+	)
+#
+names(list_bundles_per_stay_id_pretrial_min)
+#
+#df_freq_stay_id_pretrial_bundle_coded_class_min <- list_bundles_per_stay_id_pretrial_min[["coded_collapse"]]
+df_freq_stay_id_pretrial_bundle_coded_bond_class_min <- list_bundles_per_stay_id_pretrial_min[["coded_bond_class_collapse"]]
+#
+#nrow(df_freq_stay_id_pretrial_bundle_coded_class_min)
+nrow(df_freq_stay_id_pretrial_bundle_coded_bond_class_min)
+#
+#names(df_freq_stay_id_pretrial_bundle_coded_class_min)
+names(df_freq_stay_id_pretrial_bundle_coded_bond_class_min)
+#
+#fn_save_zip_it(df_freq_stay_id_pretrial_bundle_coded_class_min, RDataPath)
+fn_save_zip_it(df_freq_stay_id_pretrial_bundle_coded_bond_class_min, RDataPath)
+#
+rm(list_bundles_per_stay_id_pretrial_min)
+```
+### BUNDLE START DATES  
+  
+use fn_stay_id_bundle_segments()  
+takes two arguments: # use df_daily_combined_mod_mult_mod_coded etc. and df_inmate_stays  
+gets length of stay from df_inmate_stays  
+  
+returns list of three data frames, one each for coded_id, coded_id and coded_id  
+the data frames are of same structure except for different name of the "coded_" column  
+example:  
+names(df_stay_id_bundle_pretrial_coded_bond_class_start_date)  
+[1] "stay_id"             "import_date"         "coded_id" "total_stay"       
+[5] "n_segments"          "segment_num"         "segment_stay"  
+  
+filtered on PRE-TRIAL  
+
+
+```{r list_stay_id_bundle_pretrial_segments_min, warning=FALSE, message=FALSE}
+list_stay_id_bundle_pretrial_segments_min  <- 
+	fn_stay_id_bundle_segments(
+		df_daily_combined_pretrial_mod_mult_mod_coded_min,
+		df_inmate_stays
+	)
+#
+df_stay_id_bundle_pretrial_coded_bond_class_segments_min <- list_stay_id_bundle_pretrial_segments_min[["coded_bond_class_added_stays"]]
+#
+#
+nrow(df_stay_id_bundle_pretrial_coded_bond_class_segments_min)
+#
+names(df_stay_id_bundle_pretrial_coded_bond_class_segments_min)
+#
+fn_save_zip_it(df_stay_id_bundle_pretrial_coded_bond_class_segments_min, RDataPath)
+#
+rm(list_stay_id_bundle_pretrial_segments_min)
+```
+
+```{r bonds1, echo=TRUE}
+# all dates
+#	which requires df_stay_id_bundle_pretrial_coded_bond_class_start_date and df_stay_id_pretrial_total_sec_bond
+#
+df_stay_id_pretrial_total_sec_bond_min_all <- 
+		fn_total_stay_bond_amount_bundle_start_date(
+			df_stay_id_bundle_pretrial_coded_bond_class_segments_min,
+			df_stay_id_pretrial_total_sec_bond_min
+			)
+#
+names(df_stay_id_pretrial_total_sec_bond_min_all)
+#
+nrow(df_stay_id_pretrial_total_sec_bond_min_all)
+#
+#fn_save_zip_it(df_stay_id_pretrial_total_sec_bond_min_all, RDataPath)
+```
+
+### How do bundles and bail amounts compare?  
+  
+Consider bond amount and the first segment coded_bond_class  
+  
+We have bond amount, bundle id, and total stay.  
+ 
+```{r df_total_stay_bond_amount_pretrial_bundle_start_date_min, warning=FALSE, message=FALSE, eval=FALSE}
+df_total_stay_bond_amount_pretrial_bundle_start_date_min <-
+	fn_total_stay_bond_amount_bundle_start_date(
+		df_stay_id_bundle_pretrial_coded_bond_class_segments_min,
+		df_stay_id_pretrial_total_sec_bond_min
+	)
+#
+names(df_total_stay_bond_amount_pretrial_bundle_start_date_min)
+#
+nrow(df_total_stay_bond_amount_pretrial_bundle_start_date_min)
+#
+fn_save_zip_it(df_total_stay_bond_amount_pretrial_bundle_start_date_min, RDataPath)
+```
+  
+The class_type_dom (dominant) is derived from class_type and level in the charge definition file.  
+It is the highest of the (class_type, level) instances for the initial set of charges for each stay for each person.  
+  
+U maps to U  
+M maps to M  
+F maps to F and level < 5  
+L maps to F and level 5 or 6  
+H maps to F and level > 6  
+  
+### Comments on Comparing Pre- and Post-October 1, 2023 PTIA Length of Stay  
+  
+This cuts off determination of length of stay at the date of the most recent daily inmates data, `r FILE_DATE`.  
+Inmates who are still in custody at that date do not appear in the length of stay data file. This has strong  
+effects on understanding length of stay and biases accounting for length of stay to shorter values.  
+  
+
+At this point there are df_daily_combined_pretrial_mod and df_daily_combined_pretrial_no_bond_type_mod  
+Also df_stay_id_pretrial_total_sec_bond_min to narrow stay_id  
+  
+3/16/2024:  
+df_stay_pretrial_offense_all WILL be used  
+It is the superset of its priors
+  
+```{r df_stay_pretrial_offense_all}
+df_stay_pretrial_offense_all <- 
+	fn_stay_pretrial_offense_all(
+		df_stay_id_pretrial_total_sec_bond_min_all,
+		df_combined_pretrial_coded_bond_class_bundle_min
+	)
+#
+names(df_stay_pretrial_offense_all)
+#
+nrow(df_stay_pretrial_offense_all)
+#
+fn_save_zip_it(df_stay_pretrial_offense_all, RDataPath)
+```
+  
+
+ 
+
+
+
